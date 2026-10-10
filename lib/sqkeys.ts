@@ -1,12 +1,24 @@
 // SQ Keys: contract between the UI and the wallet logic (CDC.md, section 7.7).
 // Pages call only these functions.
 //
-// MOCK: at milestone 0 every function returns consistent fake data after 500 ms.
-// Nothing here touches a blockchain, a passkey or a server. Each mock is replaced
-// milestone by milestone without changing the signatures.
+// Real since milestone 1: createWallet, createRecoveryPhrase, confirmRecoveryPhrase,
+// getBalance, sendUsdc, and the address and deployment state returned by getAccount.
+// Every function marked MOCK still returns consistent fake data after 500 ms; mocks
+// are replaced milestone by milestone without changing the signatures.
+//
+// Nothing secret is handled here: the passkey private key never leaves the phone, and
+// the bundler and paymaster are reached through our own /api routes only.
 //
 // `k` is the number of guardians required in addition to the recovery phrase;
 // the on-chain threshold is `k + 1`.
+
+import { CandidePaymaster, SafeAccountV0_3_0 as SafeAccount } from "abstractionkit";
+import type { MetaTransaction, WebauthnPublicKey } from "abstractionkit";
+import { Bytes, Hex } from "ox";
+import { createCredential, sign } from "ox/WebAuthnP256";
+import { createPublicClient, encodeFunctionData, erc20Abi, formatUnits, http, isAddress, parseUnits } from "viem";
+import { english, generateMnemonic } from "viem/accounts";
+import { CHAIN_ID, RPC_URL, USDC_ADDRESS, USDC_DECIMALS } from "@/lib/chain";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -70,7 +82,6 @@ function mock<T>(value: T): Promise<T> {
 const MOCK_ACCOUNT_ADDRESS = "0x5afe000000000000000000000000000000000001";
 const MOCK_TX_HASH = "0x" + "ab".repeat(32);
 const MOCK_SIGNATURE = "0x" + "cd".repeat(65);
-const MOCK_BALANCE_USDC = "25.00";
 const MOCK_HIGH_VALUE_USDC = 5;
 const MOCK_SANCTIONED_ADDRESS = "0x000000000000000000000000000000000000dead";
 const MOCK_KNOWN_RECIPIENT = "0x1111111111111111111111111111111111111111";
@@ -80,10 +91,6 @@ const MOCK_REQUEST_ID = "req_mock_001";
 const MOCK_CREATED_AT = "2026-10-10T12:30:00.000Z";
 
 // Placeholder words, not a valid BIP-39 phrase.
-const MOCK_WORDS = [
-  "apple", "bridge", "candle", "dolphin", "engine", "forest",
-  "garden", "harbor", "island", "jungle", "kettle", "lemon",
-];
 const MOCK_NEW_WORDS = [
   "marble", "needle", "orange", "pencil", "quartz", "river",
   "silver", "tunnel", "umbrella", "violin", "window", "yellow",
@@ -106,41 +113,226 @@ export function loginSwissquote(clientId: string, password: string): Promise<{ c
   return mock({ clientId, name: "Léa" });
 }
 
-// MOCK
-export function createWallet(): Promise<{ address: string }> {
-  return mock({ address: MOCK_ACCOUNT_ADDRESS });
+// What this device remembers about the account. Public data only: the passkey ID,
+// its public key and the Safe address. The private key stays in the phone.
+type StoredAccount = { credentialId: string; pubkeyX: string; pubkeyY: string; address: string };
+
+const STORAGE_KEY = "sqkeys.account";
+
+function readStoredAccount(): StoredAccount | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as StoredAccount) : null;
+  } catch {
+    return null;
+  }
 }
 
-// MOCK
-export function createRecoveryPhrase(): Promise<{ words: string[] }> {
-  return mock({ words: [...MOCK_WORDS] });
+function requireStoredAccount(): StoredAccount {
+  const account = readStoredAccount();
+  if (!account) throw new Error("No account on this device. Create your phone key first.");
+  return account;
 }
 
-// MOCK: `index` is the 1-based word number shown to the user (no. 3, no. 7, no. 11).
-export function confirmRecoveryPhrase(answers: { index: number; word: string }[]): Promise<boolean> {
-  const ok =
-    answers.length > 0 &&
-    answers.every(({ index, word }) => MOCK_WORDS[index - 1] === word.trim().toLowerCase());
-  return mock(ok);
+function publicKeyOf(account: StoredAccount): WebauthnPublicKey {
+  return { x: BigInt(account.pubkeyX), y: BigInt(account.pubkeyY) };
 }
 
-// MOCK
-export function getAccount(): Promise<Account> {
-  return mock({
-    address: MOCK_ACCOUNT_ADDRESS,
-    deployed: true,
+function publicClient() {
+  return createPublicClient({ transport: http(RPC_URL) });
+}
+
+async function isDeployed(address: string): Promise<boolean> {
+  const code = await publicClient().getCode({ address: address as `0x${string}` });
+  return code !== undefined && code !== "0x";
+}
+
+function readUsdcBalance(address: string): Promise<bigint> {
+  return publicClient().readContract({
+    address: USDC_ADDRESS,
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: [address as `0x${string}`],
+  });
+}
+
+// At least 2 decimals, at most 6 ("25.00", "0.123456").
+function formatUsdc(value: bigint): string {
+  const [whole, fraction = ""] = formatUnits(value, USDC_DECIMALS).split(".");
+  return `${whole}.${fraction.padEnd(2, "0")}`;
+}
+
+// True when the user dismissed the passkey prompt (possibly wrapped by a library error).
+function isPasskeyCancellation(err: unknown): boolean {
+  for (let e = err as { name?: string; cause?: unknown } | undefined; e; e = e.cause as typeof e) {
+    if (e.name === "NotAllowedError" || e.name === "AbortError") return true;
+  }
+  return false;
+}
+
+// The most specific message of an error chain: our relay's refusals (unknown account,
+// daily limit, contract not allowed) are the innermost cause of AbstractionKit errors.
+function deepestMessage(err: unknown): string {
+  let message = "Something went wrong. Try again.";
+  for (let e = err as { message?: string; cause?: unknown } | undefined; e; e = e.cause as typeof e) {
+    if (typeof e.message === "string" && e.message) message = e.message;
+  }
+  return message;
+}
+
+// Builds one operation, has the paymaster sponsor it, signs it with the phone key and
+// sends it, all through our own /api/bundler and /api/paymaster routes. The first
+// operation of an account also deploys its Safe. Returns the transaction hash.
+async function sendSponsoredOperation(account: StoredAccount, transactions: MetaTransaction[]): Promise<string> {
+  const publicKey = publicKeyOf(account);
+  const bundlerUrl = `${window.location.origin}/api/bundler`;
+  const paymasterUrl = `${window.location.origin}/api/paymaster`;
+  const safe = SafeAccount.initializeNewAccount([publicKey]);
+
+  try {
+    const unsigned = await safe.createUserOperation(transactions, RPC_URL, bundlerUrl, {
+      expectedSigners: [publicKey],
+      preVerificationGasPercentageMultiplier: 120,
+      verificationGasLimitPercentageMultiplier: 120,
+    });
+
+    // The sponsorship policy is added by the server.
+    const { userOperation } = await new CandidePaymaster(paymasterUrl).createSponsorPaymasterUserOperation(
+      safe,
+      unsigned,
+      bundlerUrl,
+    );
+
+    // One passkey prompt: Face ID, fingerprint or device passcode.
+    const { metadata, signature } = await sign({
+      challenge: SafeAccount.getUserOperationEip712Hash(userOperation, CHAIN_ID) as Hex.Hex,
+      credentialId: account.credentialId,
+      rpId: window.location.hostname,
+      userVerification: "required",
+    });
+
+    // The Safe verifier needs every clientDataJSON field except `type` and `challenge`.
+    const { type: _type, challenge: _challenge, ...rest } = JSON.parse(metadata.clientDataJSON);
+    void _type;
+    void _challenge;
+    const fields = Object.entries(rest)
+      .map(([key, value]) => `"${key}":${JSON.stringify(value)}`)
+      .join(",");
+
+    const webauthnSignature = SafeAccount.createWebAuthnSignature({
+      authenticatorData: Bytes.fromHex(metadata.authenticatorData).buffer as ArrayBuffer,
+      clientDataFields: Hex.fromString(fields),
+      rs: [BigInt(signature.r), BigInt(signature.s)],
+    });
+    userOperation.signature = SafeAccount.formatSignaturesToUseroperationSignature(
+      [{ signer: publicKey, signature: webauthnSignature }],
+      { isInit: userOperation.factory != null },
+    );
+
+    const response = await safe.sendUserOperation(userOperation, bundlerUrl);
+    const receipt = await response.included();
+    if (!receipt) throw new Error("The transaction was sent but not confirmed yet. Check again in a minute.");
+    if (!receipt.success) throw new Error("The transaction was refused by the network. Nothing was sent.");
+    return receipt.receipt.transactionHash;
+  } catch (err) {
+    if (isPasskeyCancellation(err)) throw new Error("Cancelled. Nothing was sent.");
+    throw new Error(deepestMessage(err));
+  }
+}
+
+// Creates the phone key (passkey A, the only owner of the Safe), computes the Safe
+// address, registers it with our server and deploys the Safe with a first sponsored
+// operation. Safe to call again: it resumes where a previous attempt stopped.
+export async function createWallet(): Promise<{ address: string }> {
+  let account = readStoredAccount();
+
+  if (!account) {
+    let credential;
+    try {
+      credential = await createCredential({
+        name: "SQ Keys",
+        rp: { id: window.location.hostname, name: "SQ Keys" },
+        authenticatorSelection: { residentKey: "required", userVerification: "required" },
+        attestation: "none",
+        timeout: 60_000,
+      });
+    } catch (err) {
+      if (isPasskeyCancellation(err)) throw new Error("Setup cancelled. Your key was not created.");
+      throw new Error("Your phone key could not be created on this device.");
+    }
+
+    const publicKey = { x: BigInt(credential.publicKey.x), y: BigInt(credential.publicKey.y) };
+    account = {
+      credentialId: credential.id,
+      pubkeyX: credential.publicKey.x,
+      pubkeyY: credential.publicKey.y,
+      address: SafeAccount.createAccountAddress([publicKey]),
+    };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(account));
+  }
+
+  const response = await fetch("/api/accounts/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      address: account.address,
+      credentialId: account.credentialId,
+      pubkeyX: account.pubkeyX,
+      pubkeyY: account.pubkeyY,
+    }),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? "Your account could not be registered. Try again.");
+  }
+
+  if (!(await isDeployed(account.address))) {
+    // An empty call from the Safe to itself: its only effect is to deploy the Safe.
+    await sendSponsoredOperation(account, [{ to: account.address, value: 0n, data: "0x" }]);
+  }
+  return { address: account.address };
+}
+
+// The recovery phrase lives in this tab's memory only: never stored, never sent.
+let recoveryWords: string[] | null = null;
+
+// 12-word BIP-39 phrase generated in the browser (viem, English wordlist).
+export async function createRecoveryPhrase(): Promise<{ words: string[] }> {
+  recoveryWords = generateMnemonic(english).split(" ");
+  return { words: [...recoveryWords] };
+}
+
+// Checks 3 words of the phrase. `index` is the 1-based word number shown to the user;
+// the screen picks the 3 numbers at random.
+export async function confirmRecoveryPhrase(answers: { index: number; word: string }[]): Promise<boolean> {
+  const words = recoveryWords;
+  if (!words) throw new Error("Your recovery phrase is no longer in memory. Create a new one.");
+  const indexes = new Set(answers.map((a) => a.index));
+  if (indexes.size < 3) return false;
+  return answers.every(({ index, word }) => words[index - 1] === word.trim().toLowerCase());
+}
+
+// Real: address and deployment state. MOCK: owner label, guardians, k, delay and
+// recovery state, until the recovery milestones.
+export async function getAccount(): Promise<Account> {
+  const { address } = requireStoredAccount();
+  return {
+    address,
+    deployed: await isDeployed(address),
     owner: { type: "phone", label: "Phone key", synced: true },
     guardians: MOCK_GUARDIANS.map((g) => ({ ...g })),
     k: MOCK_K,
     onchainThreshold: MOCK_K + 1,
     delaySeconds: MOCK_DELAY_SECONDS,
     recoveryInProgress: false,
-  });
+  };
 }
 
-// MOCK
-export function getBalance(): Promise<{ usdc: string }> {
-  return mock({ usdc: MOCK_BALANCE_USDC });
+// USDC balance of the Safe, read from Base Sepolia.
+export async function getBalance(): Promise<{ usdc: string }> {
+  const { address } = requireStoredAccount();
+  return { usdc: formatUsdc(await readUsdcBalance(address)) };
 }
 
 // ---------------------------------------------------------------------------
@@ -183,11 +375,30 @@ export function checkTransfer(to: string, amount: string): Promise<TransferCheck
   return mock({ checks, highValue });
 }
 
-// MOCK
-export function sendUsdc(to: string, amount: string): Promise<{ txHash: string }> {
-  void to;
-  void amount;
-  return mock({ txHash: MOCK_TX_HASH });
+// Sends USDC from the Safe. Signed by the phone key, gas paid by the paymaster:
+// the account never needs ETH.
+export async function sendUsdc(to: string, amount: string): Promise<{ txHash: string }> {
+  const account = requireStoredAccount();
+  const recipient = to.trim();
+  if (!isAddress(recipient)) throw new Error("This recipient address is not valid.");
+
+  let value: bigint;
+  try {
+    value = parseUnits(amount.trim(), USDC_DECIMALS);
+  } catch {
+    throw new Error("This amount is not valid.");
+  }
+  if (value <= 0n) throw new Error("This amount is not valid.");
+
+  const balance = await readUsdcBalance(account.address);
+  if (value > balance) throw new Error(`Not enough USDC. Available: ${formatUsdc(balance)} USDC.`);
+
+  const transfer: MetaTransaction = {
+    to: USDC_ADDRESS,
+    value: 0n,
+    data: encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [recipient, value] }),
+  };
+  return { txHash: await sendSponsoredOperation(account, [transfer]) };
 }
 
 // MOCK
