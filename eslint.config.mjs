@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Standalone projects with their own dependencies:
+    "exit/**",
+    "sq-mock/**",
   ]),
 ]);
 

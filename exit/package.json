@@ -1,0 +1,26 @@
+{
+  "name": "sqkeys-exit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Recover an SQ Keys account without any Swissquote service: public RPC and deployed Safe + Candide Social Recovery Module contracts only.",
+  "type": "module",
+  "scripts": {
+    "setup": "tsx src/setup.ts",
+    "recover": "tsx src/recover.ts",
+    "status": "tsx src/status.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "abstractionkit": "^0.4.3",
+    "dotenv": "^18.0.7",
+    "viem": "^2.57.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
