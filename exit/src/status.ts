@@ -46,7 +46,7 @@ async function main() {
     publicClient.getBlock(),
   ]);
   console.log(`  Guardians (${guardians.length}):     ${guardians.join(", ")}`);
-  console.log(`  Recovery threshold: ${threshold} of ${guardians.length}`);
+  console.log(`  Threshold:         ${threshold} of ${guardians.length}`);
   console.log(`  Recovery nonce:    ${nonce}`);
   if (request.executeAfter === 0n) {
     console.log("  Pending recovery:  none");

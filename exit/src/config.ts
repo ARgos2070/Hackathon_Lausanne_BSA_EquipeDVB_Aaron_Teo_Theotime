@@ -84,6 +84,10 @@ export async function confirm(label: string, hash: Hash) {
   info(`${label}: sent, waiting for confirmation...`);
   const receipt = await publicClient.waitForTransactionReceipt({ hash });
   if (receipt.status !== "success") throw new Error(`${label} reverted: ${txUrl(hash)}`);
+  // The public RPC is load-balanced: wait until the node answering reads has this block too.
+  while ((await publicClient.getBlockNumber({ cacheTime: 0 })) < receipt.blockNumber) {
+    await new Promise((r) => setTimeout(r, 1000));
+  }
   ok(`${label} confirmed in block ${receipt.blockNumber}`);
   info(`Basescan: ${txUrl(hash)}`);
   return receipt;

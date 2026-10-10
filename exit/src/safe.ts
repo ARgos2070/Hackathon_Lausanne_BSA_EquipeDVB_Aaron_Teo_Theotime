@@ -34,22 +34,30 @@ const factoryAbi = parseAbi([
 ]);
 
 // Deploys a Safe v1.4.1 (L2) with a single owner and threshold 1. The owner pays the gas.
-export async function deploySafe(owner: Account, saltNonce: bigint): Promise<Address> {
+// `onPredicted` receives the address before the transaction is sent, so a crash can resume.
+export async function deploySafe(
+  owner: Account,
+  saltNonce: bigint,
+  onPredicted: (safe: Address) => void,
+): Promise<Address> {
   const initializer = encodeFunctionData({
     abi: safeAbi,
     functionName: "setup",
     args: [[owner.address], 1n, zeroAddress, "0x", SAFE_FALLBACK_HANDLER, zeroAddress, 0n, zeroAddress],
   });
-  const hash = await walletFor(owner).writeContract({
+  const { result: predicted, request } = await publicClient.simulateContract({
+    account: owner,
     address: SAFE_PROXY_FACTORY,
     abi: factoryAbi,
     functionName: "createProxyWithNonce",
     args: [SAFE_SINGLETON_L2, initializer, saltNonce],
   });
+  onPredicted(predicted);
+  const hash = await walletFor(owner).writeContract(request);
   const receipt = await confirm("Safe deployment", hash);
   const [event] = parseEventLogs({ abi: factoryAbi, eventName: "ProxyCreation", logs: receipt.logs });
-  if (!event) throw new Error("ProxyCreation event not found");
-  return event.args.proxy;
+  if (!event || event.args.proxy !== predicted) throw new Error("Unexpected Safe address");
+  return predicted;
 }
 
 // Safe "pre-validated" signature: when msg.sender is an owner, the Safe accepts
