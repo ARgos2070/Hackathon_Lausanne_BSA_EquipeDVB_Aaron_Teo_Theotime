@@ -2,9 +2,26 @@
 
 Hackathon BSA x EPFL, Lausanne, du samedi 10 octobre 2026 à 11h au dimanche 11 octobre 2026 à 11h.
 Équipe : Aaron (technique et juridique), Téo (design et front), Théotime (business case, pitch, script de sortie `exit/`, service simulé `sq-mock/`).
-**Version finale v2.4**, du 10 octobre 2026 à 13h15. Elle remplace toutes les versions précédentes et sert de seule référence pendant la construction. En cas de conflit, les consignes officielles de Swissquote (section 1) priment.
+**Version finale v2.6**, du 10 octobre 2026 à 15h15. Elle remplace toutes les versions précédentes et sert de seule référence pendant la construction. En cas de conflit, les consignes officielles de Swissquote (section 1) priment.
 
-## Changements de la v2.3 à la v2.4 (à transmettre à Téo et Théotime)
+## Changements de la v2.5 à la v2.6 (à transmettre à Téo et Théotime)
+
+1. **Bitcoin devient un livrable, plus une option.** L'équipe a appris que la grande majorité des clients crypto de Swissquote ne détient que du Bitcoin (chiffre exact à faire confirmer par le jury, ne pas l'énoncer comme un fait de Swissquote tant qu'il n'est pas confirmé). La section 7.10 est complétée (7.10.0) : une slide dédiée et la démo sur signet avec Liana sont **prévues par défaut**, la démo n'étant abandonnée que si le jury dit qu'un chemin crédible suffit.
+2. **Planning** : démarrer tôt le téléchargement et la synchronisation de Liana sur le PC de Téo (c'est le principal risque), créneau de la démo de 3h45 à 5h15, la console passe de 5h15 à 7h30.
+3. **Palier 1** : le correctif du palier 1 (endpoint Candide unique, RLS, déploiement CLI) n'a pas été ajouté au prompt déjà lancé. Il sera appliqué au début du palier 2a.
+
+---
+
+## Changements de la v2.4 à la v2.5
+
+1. **Bitcoin** : nouvelle section 7.10. La plupart des clients crypto de Swissquote détiennent du Bitcoin. On ne pivote pas, mais on montre le même modèle de garde sur Bitcoin en Miniscript, avec le wallet open source Liana comme référence. Phrase de pitch en section 11.3. Démo sur signet seulement si le jury l'attend (section 7.10.5).
+2. **Déploiement** : pas d'intégration GitHub. Le déploiement se fait depuis le PC d'Aaron avec la CLI Vercel (`npx vercel --prod`). L'URL de production fixe est **https://sq-keys.vercel.app** : toutes les passkeys se créent là, jamais sur une URL de déploiement individuelle. Téo pousse sur `teo/ui`, Aaron fusionne et déploie.
+3. **Candide** : un seul endpoint pour le bundler et le paymaster sur Base Sepolia.
+4. **Supabase** : le projet de l'app (« sq-keys-app », Zurich, RLS activé) est sur le compte d'Aaron. Le projet de `sq-mock` est sur le **compte de Théotime** (limite de 2 projets gratuits par compte). `sq-mock` est déployé par Théotime sur son Vercel, à une URL fixe.
+
+---
+
+## Changements de la v2.3 à la v2.4
 
 1. **La présentation est en anglais.** Sont en anglais : l'app, tous les textes d'écran (`design/textes.md`), les documents juridiques affichés dans l'app, le README, les commentaires du code, les messages de commit, le pitch et les slides. Le CDC reste en français (document interne).
 2. **Textes d'écran imposés en anglais** : nouvelle section 10.7. Ils sont normatifs. Les textes cités en français ailleurs dans le CDC donnent le sens ; c'est la version anglaise de 10.7 qui s'affiche.
@@ -403,8 +420,8 @@ flowchart LR
 | Bundler et paymaster | Candide, derrière notre relais (plan B : Pimlico) | Clés côté serveur, règles anti-abus |
 | Phrase | BIP-39 via viem | Standard universel |
 | App | Next.js sur Vercel, HTTPS, domaine de production fixe | WebAuthn exige HTTPS ; une passkey ne marche que sur son domaine |
-| Stockage app | Supabase (projet 1) | Persistant, connu de l'équipe ; uniquement des données publiques ou de démo |
-| Service simulé | `sq-mock/` : second projet Vercel, Supabase (projet 2) | Processus et stockage séparés, comme l'exigent les consignes |
+| Stockage app | Supabase « sq-keys-app » (compte d'Aaron, Zurich, RLS activé, accès par la clé service_role côté serveur uniquement) | Persistant, connu de l'équipe ; uniquement des données publiques ou de démo |
+| Service simulé | `sq-mock/` : projet Vercel et Supabase sur le compte de Théotime | Processus et stockage séparés, comme l'exigent les consignes |
 
 Écartés : Solana (pas de module de récupération prêt), Bitcoin (pas de smart accounts), ZeroDev en premier choix (pas de délai ni d'annulation documentés pour la récupération).
 
@@ -446,7 +463,9 @@ flowchart LR
   - politique de sponsorisation du tableau de bord Candide (plafonds globaux).
 
 ### 7.6 Points techniques à respecter
-- **Domaine fixe** : toutes les passkeys de démo sont créées sur l'URL de production Vercel.
+- **Domaine fixe** : toutes les passkeys de démo sont créées sur **https://sq-keys.vercel.app**, jamais sur une URL de déploiement individuelle.
+- **Déploiement** : CLI Vercel depuis le dossier cloné (`npx vercel --prod`), car il n'y a pas d'intégration GitHub. Chaque palier se termine par ce déploiement. Le dossier `.vercel/` est ignoré par Git.
+- **Candide** : un seul endpoint pour le bundler et le paymaster (Base Sepolia). Les deux routes de relais pointent vers lui ; l'identifiant de la politique de sponsorisation est passé dans le contexte du paymaster.
 - **Safe principal** : propriétaire unique A (`SafeWebAuthnSharedSigner` à la création), seuil 1.
 - **Gardiens à passkey** : Safe gardien contrôlé par leur passkey, adresse calculée à l'avance, déployé au premier usage (sponsorisé).
 - **Phrase et gardiens par adresse** : signature EIP-712 (`getRecoveryRequestEip712Data`), soumise par `createMultiConfirmRecoveryMetaTransaction` (par une opération sponsorisée de l'app, ou par `exit/` en payant l'ETH). La phrase signe dans le navigateur, les mots ne sont jamais transmis.
@@ -520,9 +539,58 @@ getAlerts(): Promise<{ id: string; type: "recovery_started" | "recovery_refused"
 | Moteur de règles et simulation | |
 
 ### 7.9 EVM uniquement ?
-Oui, pour ce prototype. ERC-4337 et Safe n'existent que sur les chaînes EVM : Ethereum et ses réseaux de couche 2, où se trouvent l'USDC et l'essentiel de la DeFi visée par les clients. Bitcoin n'est pas couvert. Pistes de production : signatures à seuil (MPC) pour Bitcoin, avec le même principe de récupération (aucune part suffisante chez Swissquote), ou le service en garde existant de Swissquote pour les clients qui ne veulent que du Bitcoin.
+Oui pour le prototype. ERC-4337 et Safe n'existent que sur les chaînes EVM (Ethereum et ses réseaux de couche 2), où se trouvent l'USDC et l'essentiel de la DeFi. Bitcoin, que détiennent la plupart des clients crypto de Swissquote, est traité en section 7.10.
 
----
+### 7.10 Bitcoin : le même modèle de garde en Miniscript
+
+#### 7.10.0 Pourquoi cela compte
+- Information reçue par l'équipe : la grande majorité des clients crypto de Swissquote ne détient que du Bitcoin. À faire confirmer par le jury ; en attendant, on dit « most » et on ne cite aucun pourcentage comme chiffre de Swissquote.
+- Conséquence honnête : le prototype fonctionnel (EVM, USDC) sert d'abord les clients qui ont des actifs EVM. Pour les clients qui n'ont que du Bitcoin, la réponse est la transposition Miniscript ci-dessous, démontrée sur signet.
+- Argument à porter : le **modèle de garde** (une clé qui dépense seule, une récupération par phrase et gardiens avec délai, aucune clé unique qui suffit, sortie sans Swissquote) est indépendant de la chaîne ; seul le mécanisme change (module de récupération sur EVM, timelock Miniscript sur Bitcoin).
+- Ce qu'on ne prétend pas : que l'application EVM gère du Bitcoin, ou que les passkeys signent sur Bitcoin.
+
+#### 7.10.1 Pourquoi ce n'est pas construit
+- Bitcoin n'a pas de smart account : pas d'ERC-4337, pas de module de récupération, pas de paymaster.
+- Bitcoin ne vérifie pas les signatures P-256 : **une passkey ne peut pas signer une transaction Bitcoin**. La clé du téléphone devrait être une clé secp256k1 gardée par l'app (protégée par le trousseau du téléphone et la biométrie) ou par un wallet matériel.
+- En 24h, nous avons choisi de livrer complètement le parcours EVM (créer, signer, récupérer, bonus) plutôt que deux parcours partiels.
+
+#### 7.10.2 La transposition
+Bitcoin permet d'écrire des conditions de dépense lisibles (Miniscript) avec des **timelocks relatifs** : une branche de dépense ne s'ouvre que lorsqu'une pièce n'a pas bougé depuis T blocs.
+
+| Élément SQ Keys | Sur Bitcoin |
+|---|---|
+| Clé du téléphone A (propriétaire) | **Chemin principal** : la clé A dépense seule, à tout moment |
+| Phrase de secours + k gardiens, délai, annulation | **Chemin de récupération** : k + 1 signatures parmi {phrase, G1 à Gn} (et Swissquote s'il est choisi), seulement après T blocs sans mouvement |
+| Swissquote ne peut rien seul | Swissquote n'a au plus qu'une clé dans le chemin de récupération |
+| Sortie sans Swissquote | Le descripteur (description publique du wallet) et les clés suffisent dans n'importe quel wallet compatible Miniscript, par exemple Liana |
+
+Politique type, au format Miniscript : `or_d(pk(A), and_v(v:multi(k+1, S, G1, G2, G3), older(T)))`. La syntaxe exacte sera vérifiée avec un compilateur Miniscript. Liana utilise ce schéma : un chemin principal, un ou plusieurs chemins de récupération à timelock, chacun pouvant contenir plusieurs clés. Son exemple publié est `wsh(or_d(pk(cle_principale), and_v(v:pk(cle_recuperation), older(52560))))`, soit environ un an.
+
+#### 7.10.3 La différence à dire honnêtement : l'annulation
+- **Sur EVM** : le délai démarre **quand une récupération est demandée**, et le propriétaire l'annule avec sa clé.
+- **Sur Bitcoin** : le timelock court **depuis la réception de chaque pièce**. Il n'y a pas de demande à annuler. Le propriétaire « annule » en **déplaçant ses fonds vers lui-même** avant l'échéance, ce qui remet le compteur à zéro. Liana rappelle à l'utilisateur quand le premier chemin de récupération va s'ouvrir.
+- **Conséquences** :
+  - un client actif rafraîchit ses pièces de temps en temps, ce qui coûte des frais en BTC ;
+  - un client qui a perdu son téléphone attend la fin du timelock (par exemple 1 à 6 mois) avant de récupérer, contre 3 jours sur EVM ;
+  - après l'échéance, le chemin de récupération reste ouvert jusqu'au prochain rafraîchissement : un voleur de la phrase qui a aussi trompé k gardiens peut alors dépenser.
+- **Rôle de Swissquote** : surveiller les échéances et alerter le client (sans pouvoir sur les fonds), sauvegarder le descripteur, coordonner les signatures (PSBT), et tenir une clé de gardien optionnelle.
+- **Le choix de T est un compromis** : plus il est long, plus la récupération légitime est lente ; plus il est court, plus les rafraîchissements sont fréquents.
+
+#### 7.10.4 Autres points
+- **Vérification de propriété** (règle de voyage) : signature de message BIP-322. Sa prise en charge pour des adresses à script reste inégale selon les wallets (à vérifier). À défaut, test par micro-transaction.
+- **Sans gas** : sans objet. Les frais se paient en BTC, sans paymaster.
+- **Wallets matériels** compatibles Miniscript cités par Liana et ses partenaires : BitBox02, Coldcard, Jade, entre autres. La compatibilité de la Trezor avec ces politiques est à vérifier.
+- **Production** : implémentation de référence Liana (open source, Wizardsardine), ou une bibliothèque Miniscript établie (BDK, rust-miniscript) dans l'app Swissquote. MPC à seuil en alternative, au prix d'un serveur de parts.
+
+#### 7.10.5 Démo sur signet : notre avis
+- **Faisable sans code** : Liana tourne sur signet avec une clé logicielle (« hot signer »), des pièces gratuites (faucet signet) et un timelock de 2 blocs, soit environ 20 minutes. Il y a deux options de backend : un Bitcoin Core géré par Liana (environ 20 Go, synchronisation rapide sur signet) ou un serveur Electrum.
+- **Contenu de la démo** : une dépense par le chemin principal, puis, après 2 blocs, une dépense par le chemin de récupération (« Recover funds »). Une vidéo de 30 s (V6) suffit.
+- **Coût** : environ 1h30 pour une personne, sans toucher aux paliers d'Aaron. Risques : téléchargement et synchronisation, et une politique de récupération multi-clés plus longue à configurer que la version à une clé.
+- **Décision (v2.6)** :
+  - **par défaut, on la fait** : Téo, créneau 3h45 à 5h15, sans code, plafond 1h30, avec la vidéo V6 ;
+  - le téléchargement et la synchronisation de Liana (environ 20 Go avec Bitcoin Core géré, ou serveur Electrum) sont lancés **ce soir** sur le PC de Téo, en tâche de fond, pour ne pas dépendre du réseau le matin ;
+  - si le jury dit qu'un chemin crédible suffit, on s'en tient à la section 7.10, une slide dédiée et la phrase de pitch ;
+  - si ça bloque plus de 30 minutes, on abandonne sans regret et on garde la slide.
 
 ## 8. Volet juridique suisse (responsable : Aaron)
 
@@ -874,7 +942,7 @@ En vidéo dans le README : la création du compte, la phrase volée avec récup�
 - Garde ou logiciel au sens de la FINMA ?
 - Quand le client paie un tiers, Swissquote est-il l'institution émettrice ?
 - Qui paie le gas, et comment empêchez-vous les abus ?
-- Pourquoi EVM ? Et Bitcoin ?
+- Pourquoi EVM ? Et Bitcoin, que détiennent la plupart de vos clients ? Réponse (section 7.10), à dire en anglais : “Most Swissquote crypto clients hold Bitcoin, so we designed for it. Bitcoin has no smart accounts and can't verify passkeys, but the same custody model maps to a Miniscript wallet: the phone key spends alone, and the recovery phrase plus guardians can only spend after a timelock, which the client resets just by moving their coins. The open-source Liana wallet does exactly this today, so the path to production is short.”
 - Les passkeys sont chez Apple : Apple garde-t-il les clés ?
 - Vous laissez le client aller sur des dApps non approuvées : qui est responsable ?
 
@@ -892,7 +960,7 @@ Palier 0 lancé à 12h30. Chaque palier est commité, déployé et vérifié sur
 | **23h15 à 23h45** | **Répétition chronométrée n° 1, à trois**, avec ce qui marche et des vidéos à la place du reste | | |
 | 23h45 à 2h00 | **3** : moteur de règles, sanctions, montant élevé, autorisation de dApp | Dort (23h45 à 3h45) | Dort (23h45 à 3h45) |
 | 2h00 à 5h00 | Dort | | |
-| 3h45 à 7h30 | | Console branchée sur `sq-mock` ; tests sur iPhone ; vidéos V1 à V4 | Corrections de `sq-mock` ; README (parties juridique, business, `exit/`) |
+| 3h45 à 7h30 | | **3h45 à 5h15 : démo Bitcoin sur signet avec Liana (7.10.5), vidéo V6** ; 5h15 à 7h30 : console branchée sur `sq-mock` ; tests sur iPhone ; vidéos V1 à V4 | Corrections de `sq-mock` ; README (parties juridique, business, `exit/`) |
 | 5h00 à 7h30 | **4** : intégration de `sq-mock` dans l'app (connexion, preuve de propriété, transfert depuis le compte, `resolve-account`, gardien Swissquote, appel simulé) ; **5** si le temps le permet : frais en USDC | | |
 | 7h30 | Gel du code | | |
 | 7h30 à 10h00 | README final, répétitions chronométrées n° 2 et n° 3, vidéos de secours vérifiées | | |
@@ -919,6 +987,7 @@ Si le retard s'accumule, on coupe dans cet ordre :
 | 6 | Sortie sans Swissquote | Gardiens par adresse Ethereum + `exit/` |
 | 7 | Transactions | Passkey seule ; au-dessus du seuil : écran, case à cocher, nouvelle passkey |
 | 8 | Seuil de montant élevé | 5 USDC en démo, 1'000 CHF en production |
+| 8bis | Bitcoin | Section 7.10 : même modèle en Miniscript (Liana), slide dédiée, démo signet par défaut (Téo, 3h45 à 5h15) |
 | 9 | Gas | Payé par Swissquote via le paymaster, derrière un relais serveur avec règles |
 | 10 | Stockage | Supabase app (aucune donnée d'identité) ; Supabase distinct pour `sq-mock` (identité, preuves) |
 | 10 bis | Alertes de récupération | Appareils enregistrés, gardiens, appel de Swissquote (simulé) ; jamais par e-mail |
